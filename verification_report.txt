@@ -1,0 +1,52 @@
+QUESTION VERIFICATION REPORT
+============================
+
+Based on analysis of index.html and lecture PDFs (Lec 2.pdf, Lec3.pdf, Lec4.pdf, Lec5.pdf):
+
+TOTAL QUESTIONS IN HTML: 50
+
+BREAKDOWN BY SECTION:
+- SDLC & Models: 5 questions
+- Project Planning: 6 questions  
+- Requirements: 13 questions
+- Project Management: 3 questions
+- System Modeling: 6 questions
+- Requirements Elicitation: 17 questions
+
+VERIFICATION RESULTS:
+====================
+
+MNEMONICS FOUND IN PDFs: 19/50 (38%)
+- AUDI, BSST, CUTE, DQCVM, ESTO, FAST, FCUF, FURPS, ICC, IOWA, JAD, MAG, MUST, NGT, OPEN, PLANS, POE, PRICES, US
+
+MNEMONICS NOT FOUND IN PDFs: 31/50 (62%)
+- AIEG, AUCSD, CCC, COMP, CRISP, CSVD, DDIIP, ICUS, JCP, MSCW, NSUGM, PACES, PROVE, RADDIT, RICE, RTM, SCOPED, SLIM, SLP, SPEAR, SPRUCE, SQUAD, STORM, SWORD, TIGASE, TRIBE, UOST, VUIT, WAVS, WBPF, WIRED
+
+IMPORTANT NOTES:
+================
+
+1. PDF text extraction may not be perfect - some mnemonics might be in:
+   - Images or diagrams
+   - Special formatting that doesn't extract well
+   - Tables or complex layouts
+
+2. Some questions may have been created manually based on lecture content
+   rather than being directly copied from slides
+
+3. The concepts/keywords from most questions DO appear in the PDFs, even if
+   the specific mnemonic acronyms don't
+
+RECOMMENDATION:
+===============
+
+To ensure completeness, you should:
+1. Manually review each PDF to verify all key concepts are covered
+2. Check if any mnemonics appear in images/diagrams that weren't extracted
+3. Verify that all important topics from the lectures have corresponding
+   questions in your study cards
+
+The fact that 62% of mnemonics weren't found suggests either:
+- PDF extraction limitations
+- Questions were created from lecture understanding rather than direct copying
+- Some content may be missing
+
