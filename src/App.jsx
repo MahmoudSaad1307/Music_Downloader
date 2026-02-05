@@ -21,8 +21,41 @@ function formatTime(seconds) {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
+function loadYouTubeApi() {
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+
+  return new Promise((resolve) => {
+    const existing = document.querySelector('script[data-yt-iframe-api="1"]');
+
+    if (existing) {
+      const previous = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        if (typeof previous === "function") previous();
+        resolve(window.YT);
+      };
+      return;
+    }
+
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    tag.async = true;
+    tag.dataset.ytIframeApi = "1";
+
+    const firstScript = document.getElementsByTagName("script")[0];
+    if (firstScript?.parentNode) {
+      firstScript.parentNode.insertBefore(tag, firstScript);
+    } else {
+      document.head.appendChild(tag);
+    }
+
+    window.onYouTubeIframeAPIReady = () => resolve(window.YT);
+  });
+}
+
 export default function App() {
-  const audioRef = useRef(null);
+  const playerRef = useRef(null);
+  const playerReadyRef = useRef(false);
+  const intervalRef = useRef(null);
   const playlistRef = useRef([]);
 
   const apiBase = (import.meta.env.VITE_API_BASE ?? "/")
@@ -54,11 +87,6 @@ export default function App() {
   const canPrev = currentSongIndex > 0;
   const canNext = currentSongIndex < playlist.length - 1;
 
-  const streamUrl = useMemo(() => {
-    if (!currentSong?.videoId) return "";
-    return apiUrl(`/api/stream/${encodeURIComponent(currentSong.videoId)}`);
-  }, [apiUrl, currentSong?.videoId]);
-
   async function runSearch(e) {
     e?.preventDefault?.();
     const q = query.trim();
@@ -80,66 +108,21 @@ export default function App() {
     }
   }
 
-  async function toSong(videoId) {
-    const res = await fetch(apiUrl(`/api/info/${encodeURIComponent(videoId)}`));
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      try {
-        const parsed = JSON.parse(text);
-        throw new Error(parsed?.error || "Info failed");
-      } catch {
-        throw new Error(text || "Info failed");
-      }
-    }
-    return res.json();
-  }
-
-  function prefetchStreamUrl(videoId) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-    fetch(apiUrl(`/api/stream/${encodeURIComponent(videoId)}`), {
-      method: "GET",
-      headers: { Range: "bytes=0-1023" },
-      keepalive: true,
-      signal: controller.signal,
-    })
-      .then(() => console.log(`Prefetched: ${videoId}`))
-      .catch(() => {})
-      .finally(() => clearTimeout(timeoutId));
-  }
-
   async function playNowFromResult(result) {
-    // INSTANT PLAY: Use search result info immediately
     const song = {
       videoId: result.videoId,
       title: result.title,
       channelName: result.channelName,
       thumbnail: result.thumbnail,
-      duration: result.duration || 0, // Use duration from search if available
+      duration: result.duration || 0,
     };
 
-    // Immediately start playing with available info
     flushSync(() => {
       setPlaylist([song]);
       setCurrentSongIndex(0);
       setIsPlaying(true);
-      setSearchError(""); // Clear any previous errors
+      setSearchError("");
     });
-
-    // INSTANT: Prefetch stream immediately (don't wait)
-    prefetchStreamUrl(result.videoId);
-
-    // Fetch better details in background (non-blocking)
-    toSong(result.videoId)
-      .then((fullSong) => {
-        // Update with complete info when it arrives
-        setPlaylist([fullSong]);
-      })
-      .catch((err) => {
-        console.warn("Background info fetch failed:", err);
-        // Keep playing with the info we have
-      });
   }
 
   function addToQueueFromResult(result) {
@@ -158,25 +141,11 @@ export default function App() {
       setPlaylist([...currentPlaylist, song]);
     });
 
-    // Prefetch in background
-    prefetchStreamUrl(result.videoId);
-
-    // Update with full info in background
-    toSong(result.videoId)
-      .then((fullSong) => {
-        setPlaylist((current) =>
-          current.map((s) => (s.videoId === fullSong.videoId ? fullSong : s)),
-        );
-      })
-      .catch(() => {
-        // Silently fail - we have basic info
-      });
+    setSearchError("");
   }
 
   function playAtIndex(index) {
     if (index < 0 || index >= playlist.length) return;
-    const target = playlistRef.current[index];
-    if (target?.videoId) prefetchStreamUrl(target.videoId);
     setCurrentSongIndex(index);
     setIsPlaying(true);
   }
@@ -209,39 +178,23 @@ export default function App() {
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
-    const a = audioRef.current;
-    if (a) {
-      a.pause();
-      a.removeAttribute("src");
-      a.load();
+    const player = playerRef.current;
+    if (player && playerReadyRef.current) {
+      player.stopVideo();
     }
   }
 
   function togglePlay() {
-    const audio = audioRef.current;
     setPlayerError("");
-
-    if (audio && streamUrl) {
-      if (isPlaying) {
-        audio.pause();
-        setIsPlaying(false);
-      } else {
-        // Try immediate play
-        const playPromise = audio.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => setIsPlaying(true))
-            .catch((err) => {
-              console.warn("Immediate play failed:", err);
-              // Fallback to normal state change
-              setIsPlaying(true);
-            });
-        } else {
-          setIsPlaying(true);
-        }
-      }
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current) {
+      setIsPlaying((prev) => !prev);
+      return;
+    }
+    if (isPlaying) {
+      player.pauseVideo();
     } else {
-      setIsPlaying(!isPlaying);
+      player.playVideo();
     }
   }
 
@@ -260,89 +213,118 @@ export default function App() {
     setIsPlaying(true);
   }
 
+  const nextTrackRef = useRef(null);
+
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.volume = volume;
-  }, [volume]);
+    nextTrackRef.current = nextTrack;
+  });
 
-  // INSTANT: Optimized stream loading
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    let canceled = false;
 
-    setPlayerError("");
+    loadYouTubeApi().then((YT) => {
+      if (canceled || playerRef.current) return;
 
-    if (!streamUrl || !currentSong?.videoId) {
-      // Only clear if we have no current song
-      if (!currentSong?.videoId) {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-        setCurrentTime(0);
-        setDuration(0);
+      const playerConfig = {
+        height: "0",
+        width: "0",
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          rel: 0,
+          playsinline: 1,
+          modestbranding: 1,
+        },
+        events: {
+          onReady: (event) => {
+            playerReadyRef.current = true;
+            event.target.setVolume(Math.round(volume * 100));
+            const d = event.target.getDuration?.();
+            if (Number.isFinite(d) && d > 0) setDuration(d);
+            if (currentSong?.videoId && isPlaying) event.target.playVideo();
+          },
+          onStateChange: (event) => {
+            if (!window.YT) return;
+            const state = event.data;
+            if (state === window.YT.PlayerState.ENDED) {
+              nextTrackRef.current?.();
+              return;
+            }
+            if (state === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+              const d = event.target.getDuration?.();
+              if (Number.isFinite(d) && d > 0) setDuration(d);
+              return;
+            }
+            if (state === window.YT.PlayerState.PAUSED) {
+              setIsPlaying(false);
+            }
+          },
+          onError: () => {
+            setPlayerError("Playback failed. Try another video.");
+            setIsPlaying(false);
+          },
+        },
+      };
+
+      if (currentSong?.videoId) {
+        playerConfig.videoId = currentSong.videoId;
       }
+
+      playerRef.current = new YT.Player("yt-player", playerConfig);
+
+      intervalRef.current = setInterval(() => {
+        const player = playerRef.current;
+        if (!player || !playerReadyRef.current) return;
+        const t = player.getCurrentTime?.();
+        if (Number.isFinite(t)) setCurrentTime(t);
+        const d = player.getDuration?.();
+        if (Number.isFinite(d) && d > 0) setDuration(d);
+      }, 500);
+    });
+
+    return () => {
+      canceled = true;
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      const player = playerRef.current;
+      if (player?.destroy) player.destroy();
+      playerRef.current = null;
+      playerReadyRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current) return;
+
+    if (!currentSong?.videoId) {
+      player.stopVideo();
+      setCurrentTime(0);
+      setDuration(0);
       return;
     }
 
-    // Only change source if it's different
-    const currentSrc = audio.src.replace(window.location.origin, "");
-    const newSrc = streamUrl.replace(apiBase, "");
-
-    if (currentSrc !== newSrc) {
-      audio.src = streamUrl;
-      audio.load();
-      setCurrentTime(0);
-      setDuration(0);
-    }
-
-    // INSTANT: Play immediately without waiting for metadata
-    if (isPlaying) {
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          console.warn("Auto-play failed:", err);
-          setIsPlaying(false);
-          // Only show error if it's not a user gesture issue
-          if (!err.message.includes("user gesture")) {
-            setPlayerError("Autoplay blocked. Press Play.");
-          }
-        });
-      }
-    }
-  }, [streamUrl, isPlaying, currentSong?.videoId, apiBase]);
+    setCurrentTime(0);
+    setDuration(0);
+    player.loadVideoById(currentSong.videoId);
+    if (!isPlaying) player.pauseVideo();
+  }, [currentSong?.videoId]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current) return;
+    if (isPlaying) player.playVideo();
+    else player.pauseVideo();
+  }, [isPlaying]);
 
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime || 0);
-    const onLoaded = () => setDuration(audio.duration || 0);
-    const onEnded = () => nextTrack();
-    const onError = () => {
-      setPlayerError("Audio failed to load. Try another video.");
-      setIsPlaying(false);
-    };
-
-    audio.addEventListener("timeupdate", onTimeUpdate);
-    audio.addEventListener("loadedmetadata", onLoaded);
-    audio.addEventListener("ended", onEnded);
-    audio.addEventListener("error", onError);
-
-    return () => {
-      audio.removeEventListener("timeupdate", onTimeUpdate);
-      audio.removeEventListener("loadedmetadata", onLoaded);
-      audio.removeEventListener("ended", onEnded);
-      audio.removeEventListener("error", onError);
-    };
-  }, [playlist.length, currentSongIndex]);
-
-  // Add preloading on hover for better UX
-  const handleResultHover = (videoId) => {
-    if (!playlist.some((s) => s.videoId === videoId)) {
-      prefetchStreamUrl(videoId);
-    }
-  };
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current) return;
+    player.setVolume(Math.round(volume * 100));
+  }, [volume]);
 
   const handleSearchKeyDown = (e) => {
     if (e.key === "Enter") {
@@ -352,7 +334,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-32">
-      <audio ref={audioRef} preload="auto" crossOrigin="anonymous" />
+      <div id="yt-player" style={{ width: 0, height: 0, overflow: "hidden" }} />
 
       <div className="mx-auto max-w-6xl px-4 py-8">
         <div className="flex items-start justify-between gap-4">
@@ -408,7 +390,6 @@ export default function App() {
                 <div
                   key={r.videoId}
                   className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900"
-                  onMouseEnter={() => handleResultHover(r.videoId)}
                 >
                   <div className="flex gap-3 p-3">
                     <img
@@ -596,8 +577,10 @@ export default function App() {
                     onChange={(e) => {
                       const next = Number(e.target.value);
                       setCurrentTime(next);
-                      const a = audioRef.current;
-                      if (a) a.currentTime = next;
+                      const player = playerRef.current;
+                      if (player && playerReadyRef.current) {
+                        player.seekTo(next, true);
+                      }
                     }}
                     className="w-full"
                   />
