@@ -1,13 +1,9 @@
 import cors from "cors";
 import express from "express";
-import { spawn } from "node:child_process";
 import { Readable, pipeline } from "node:stream";
 import yts from "yt-search";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import ytdl from "@distube/ytdl-core";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -24,22 +20,13 @@ function logError(message, error) {
   console.error(error?.stack || error);
 }
 
-const ytDlpPath = join(process.cwd(), "bin/yt-dlp");
-
-// Make it executable
-try {
-  chmodSync(ytDlpPath, 0o755);
-  log(`Made yt-dlp executable: ${ytDlpPath}`);
-} catch (err) {
-  logError("Failed to chmod yt-dlp", err);
-}
 // IMPROVED: Separate caches for stream URLs and full video info
 const streamUrlCache = new Map();
 const videoInfoCache = new Map();
-const STREAM_CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 hours (YouTube URLs valid for ~6 hours)
+const STREAM_CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 hours
 const INFO_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-// IMPROVED: In-flight request deduplication to prevent multiple yt-dlp calls for same video
+// IMPROVED: In-flight request deduplication
 const pendingStreamRequests = new Map();
 const pendingInfoRequests = new Map();
 
@@ -98,51 +85,7 @@ function normalizeVideoId(videoIdOrUrl) {
   return null;
 }
 
-function pickBestThumbnailFromYtDlpJson(json) {
-  if (typeof json?.thumbnail === "string" && json.thumbnail)
-    return json.thumbnail;
-  const thumbs = Array.isArray(json?.thumbnails) ? json.thumbnails : [];
-  if (thumbs.length === 0) return "";
-  const best = thumbs.reduce(
-    (acc, t) => ((t?.width ?? 0) > (acc?.width ?? 0) ? t : acc),
-    thumbs[0],
-  );
-  return best?.url || "";
-}
-
-function runYtDlp(args, { timeoutMs = 20_000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(ytDlpPath, args, { windowsHide: true });
-
-    let stdout = "";
-    let stderr = "";
-
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error("yt-dlp timed out"));
-    }, timeoutMs);
-
-    child.stdout.on("data", (d) => {
-      stdout += d.toString("utf8");
-    });
-    child.stderr.on("data", (d) => {
-      stderr += d.toString("utf8");
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) return resolve({ stdout, stderr });
-      reject(new Error(stderr.trim() || `yt-dlp failed (exit ${code})`));
-    });
-  });
-}
-
-// OPTIMIZED: Fetch stream URL with faster format selection
+// NEW: Fetch stream URL using ytdl-core
 async function fetchStreamUrl(videoId) {
   // Check cache first
   const cached = getCachedStreamUrl(videoId);
@@ -160,31 +103,31 @@ async function fetchStreamUrl(videoId) {
   // Start new fetch
   const promise = (async () => {
     try {
-      log(`Fetching FAST stream URL for: ${videoId}`);
+      log(`Fetching stream URL for: ${videoId}`);
       const videoUrl = toYouTubeWatchUrl(videoId);
 
-      const { stdout } = await runYtDlp(
-        [
-          "-f",
-          "bestaudio[ext=m4a][filesize<50M]/bestaudio[ext=mp3]/bestaudio[ext=webm]/bestaudio/worstaudio/worst[acodec!=none]/worst",
-          "-g",
-          "--no-playlist",
-          "--no-warnings",
-          "--extractor-args",
-          "youtube:player_client=android,web",
-          "--throttled-rate",
-          "100K", // Don't wait for slow formats
-          "--socket-timeout",
-          "10", // Faster timeout
-          videoUrl,
-        ],
-        { timeoutMs: 15_000 }, // Shorter timeout for streaming
-      );
+      // Get video info
+      const info = await ytdl.getInfo(videoUrl);
 
-      const directUrl = String(stdout).trim().split(/\r?\n/).filter(Boolean)[0];
-      if (!directUrl) throw new Error("yt-dlp returned no stream URL");
+      // Choose best audio format
+      const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+      
+      if (!audioFormats.length) {
+        throw new Error('No audio formats found');
+      }
 
-      log(`Stream URL obtained for ${videoId} (${directUrl.length} chars)`);
+      // Pick highest quality audio format
+      const bestAudio = audioFormats.reduce((best, format) => {
+        const bestBitrate = best.audioBitrate || 0;
+        const currentBitrate = format.audioBitrate || 0;
+        return currentBitrate > bestBitrate ? format : best;
+      }, audioFormats[0]);
+
+      const directUrl = bestAudio.url;
+      
+      if (!directUrl) throw new Error("No stream URL found");
+
+      log(`Stream URL obtained for ${videoId}`);
       setCachedStreamUrl(videoId, directUrl);
       return directUrl;
     } finally {
@@ -196,7 +139,7 @@ async function fetchStreamUrl(videoId) {
   return promise;
 }
 
-// IMPROVED: Fetch video info with deduplication and separate cache
+// NEW: Fetch video info using ytdl-core
 async function fetchVideoInfo(videoId) {
   // Check cache first
   const cached = getCachedVideoInfo(videoId);
@@ -216,22 +159,20 @@ async function fetchVideoInfo(videoId) {
     try {
       log(`Fetching video info for: ${videoId}`);
       const videoUrl = toYouTubeWatchUrl(videoId);
-      const { stdout } = await runYtDlp(
-        ["-j", "--no-playlist", "--no-warnings", videoUrl],
-        { timeoutMs: 30_000 },
-      );
-      const parsed = JSON.parse(stdout);
+      
+      const info = await ytdl.getBasicInfo(videoUrl);
+      const details = info.videoDetails;
 
-      const info = {
+      const videoInfo = {
         videoId,
-        title: parsed?.title || "Unknown Title",
-        channelName: parsed?.channel || parsed?.uploader || "Unknown Channel",
-        thumbnail: pickBestThumbnailFromYtDlpJson(parsed),
-        duration: Number(parsed?.duration) || 0,
+        title: details.title || "Unknown Title",
+        channelName: details.author?.name || details.ownerChannelName || "Unknown Channel",
+        thumbnail: details.thumbnails?.[details.thumbnails.length - 1]?.url || "",
+        duration: Number(details.lengthSeconds) || 0,
       };
 
-      setCachedVideoInfo(videoId, info);
-      return info;
+      setCachedVideoInfo(videoId, videoInfo);
+      return videoInfo;
     } finally {
       pendingInfoRequests.delete(videoId);
     }
@@ -247,6 +188,7 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     service: "YouTube Audio Player API",
+    method: "ytdl-core",
     cacheStats: {
       streamUrls: streamUrlCache.size,
       videoInfo: videoInfoCache.size,
@@ -256,7 +198,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// OPTIMIZED: Video info endpoint with fast response
+// Video info endpoint
 app.get("/api/info/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
@@ -302,13 +244,12 @@ app.get("/api/search", async (req, res) => {
 
     log(`Found ${videos.length} results for: ${query}`);
 
-    // Return results with durations from search
     const response = videos.slice(0, 10).map((v) => ({
       videoId: v.videoId,
       title: v.title || "Unknown Title",
       thumbnail: v.thumbnail || "",
       channelName: v.author?.name || v.author || "Unknown Channel",
-      duration: v.duration?.seconds || 0, // Include duration from search
+      duration: v.duration?.seconds || 0,
     }));
 
     return res.json(response);
@@ -321,7 +262,7 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// OPTIMIZED: Stream endpoint with instant response
+// Stream endpoint
 app.get("/api/stream/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
@@ -338,7 +279,7 @@ app.get("/api/stream/:videoId", async (req, res) => {
   );
 
   try {
-    // Fetch stream URL (cached or new) - this is fast due to caching
+    // Fetch stream URL (cached or new)
     const directUrl = await fetchStreamUrl(videoId);
 
     const abortController = new AbortController();
@@ -365,7 +306,7 @@ app.get("/api/stream/:videoId", async (req, res) => {
 
     // Set response headers for audio
     res.status(upstream.status);
-    res.setHeader("Cache-Control", "public, max-age=7200"); // Cache for 2 hours
+    res.setHeader("Cache-Control", "public, max-age=7200");
     res.setHeader(
       "Accept-Ranges",
       upstream.headers.get("accept-ranges") || "bytes",
@@ -442,7 +383,7 @@ app.get("/api/stream/:videoId", async (req, res) => {
   }
 });
 
-// OPTIMIZED: HEAD request with instant response
+// HEAD request
 app.head("/api/stream/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
