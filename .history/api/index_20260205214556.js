@@ -182,8 +182,8 @@ async function fetchVideoInfo(videoId) {
   return promise;
 }
 
-// Health check endpoint - REMOVED /api prefix
-app.get("/health", (req, res) => {
+// Health check endpoint
+app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -198,8 +198,8 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Video info endpoint - REMOVED /api prefix
-app.get("/info/:videoId", async (req, res) => {
+// Video info endpoint
+app.get("/api/info/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
   if (!videoId) {
@@ -227,8 +227,8 @@ app.get("/info/:videoId", async (req, res) => {
   }
 });
 
-// Search YouTube endpoint - REMOVED /api prefix
-app.get("/search", async (req, res) => {
+// Search YouTube endpoint
+app.get("/api/search", async (req, res) => {
   const query = String(req.query.q ?? "").trim();
 
   if (!query) {
@@ -262,8 +262,8 @@ app.get("/search", async (req, res) => {
   }
 });
 
-// Stream endpoint - REMOVED /api prefix
-app.get("/stream/:videoId", async (req, res) => {
+// Stream endpoint
+app.get("/api/stream/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
   if (!videoId) {
@@ -383,8 +383,8 @@ app.get("/stream/:videoId", async (req, res) => {
   }
 });
 
-// HEAD request - REMOVED /api prefix
-app.head("/stream/:videoId", async (req, res) => {
+// HEAD request
+app.head("/api/stream/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
   if (!videoId) {
@@ -411,8 +411,8 @@ app.head("/stream/:videoId", async (req, res) => {
   fetchStreamUrl(videoId).catch(() => {});
 });
 
-// Cache management endpoints - REMOVED /api prefix
-app.post("/cache/clear", (req, res) => {
+// Cache management endpoints
+app.post("/api/cache/clear", (req, res) => {
   const beforeStreams = streamUrlCache.size;
   const beforeInfo = videoInfoCache.size;
 
@@ -430,7 +430,7 @@ app.post("/cache/clear", (req, res) => {
   });
 });
 
-app.get("/cache/stats", (req, res) => {
+app.get("/api/cache/stats", (req, res) => {
   res.json({
     streamUrls: {
       count: streamUrlCache.size,
@@ -530,3 +530,4 @@ process.on("uncaughtException", (error) => {
   logError("Uncaught Exception:", error);
   process.exit(1);
 });
+export default app;
