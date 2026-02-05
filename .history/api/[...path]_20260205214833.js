@@ -182,14 +182,13 @@ async function fetchVideoInfo(videoId) {
   return promise;
 }
 
-// Health check endpoint
+// Health check endpoint - REMOVED /api prefix
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
     service: "YouTube Audio Player API",
     method: "ytdl-core",
-    environment: process.env.VERCEL ? "vercel" : "local",
     cacheStats: {
       streamUrls: streamUrlCache.size,
       videoInfo: videoInfoCache.size,
@@ -199,7 +198,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Video info endpoint
+// Video info endpoint - REMOVED /api prefix
 app.get("/info/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
@@ -228,7 +227,7 @@ app.get("/info/:videoId", async (req, res) => {
   }
 });
 
-// Search YouTube endpoint
+// Search YouTube endpoint - REMOVED /api prefix
 app.get("/search", async (req, res) => {
   const query = String(req.query.q ?? "").trim();
 
@@ -263,7 +262,7 @@ app.get("/search", async (req, res) => {
   }
 });
 
-// Stream endpoint
+// Stream endpoint - REMOVED /api prefix
 app.get("/stream/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
@@ -384,7 +383,7 @@ app.get("/stream/:videoId", async (req, res) => {
   }
 });
 
-// HEAD request
+// HEAD request - REMOVED /api prefix
 app.head("/stream/:videoId", async (req, res) => {
   const videoId = normalizeVideoId(req.params.videoId);
 
@@ -412,7 +411,7 @@ app.head("/stream/:videoId", async (req, res) => {
   fetchStreamUrl(videoId).catch(() => {});
 });
 
-// Cache management endpoints
+// Cache management endpoints - REMOVED /api prefix
 app.post("/cache/clear", (req, res) => {
   const beforeStreams = streamUrlCache.size;
   const beforeInfo = videoInfoCache.size;
@@ -448,20 +447,20 @@ app.get("/cache/stats", (req, res) => {
   });
 });
 
-// 404 handler - FIXED
+// 404 handler
 app.use((req, res) => {
   log(`404 - Route not found: ${req.method} ${req.path}`);
   res.status(404).json({
     error: "Route not found",
     path: req.path,
     availableEndpoints: [
-      "GET /health",
-      "GET /info/:videoId",
-      "GET /search?q=query",
-      "GET /stream/:videoId",
-      "HEAD /stream/:videoId",
-      "POST /cache/clear",
-      "GET /cache/stats",
+      "GET /api/health",
+      "GET /api/info/:videoId",
+      "GET /api/search?q=query",
+      "GET /api/stream/:videoId",
+      "HEAD /api/stream/:videoId",
+      "POST /api/cache/clear",
+      "GET /api/cache/stats",
     ],
   });
 });
@@ -481,14 +480,53 @@ app.use((err, req, res, next) => {
   }
 });
 
-// Only listen locally, not on Vercel
+const port = Number(process.env.PORT ?? 3002);
+
 if (!process.env.VERCEL) {
-  const port = Number(process.env.PORT ?? 3002);
   app.listen(port, () => {
     log(`🚀 API listening on http://localhost:${port}`);
-    log(`Health check: http://localhost:${port}/health`);
+    log(`Health check: http://localhost:${port}/api/health`);
     log(`Environment: ${process.env.NODE_ENV || "development"}`);
   });
 }
 
 export default app;
+
+// Periodic cache cleanup
+setInterval(
+  () => {
+    const now = Date.now();
+    let streamsCleaned = 0;
+    let infoCleaned = 0;
+
+    for (const [videoId, cached] of streamUrlCache.entries()) {
+      if (now - cached.timestamp > STREAM_CACHE_TTL_MS) {
+        streamUrlCache.delete(videoId);
+        streamsCleaned++;
+      }
+    }
+
+    for (const [videoId, cached] of videoInfoCache.entries()) {
+      if (now - cached.timestamp > INFO_CACHE_TTL_MS) {
+        videoInfoCache.delete(videoId);
+        infoCleaned++;
+      }
+    }
+
+    if (streamsCleaned > 0 || infoCleaned > 0) {
+      log(
+        `Cache cleanup: removed ${streamsCleaned} streams, ${infoCleaned} info entries`,
+      );
+    }
+  },
+  10 * 60 * 1000,
+); // Every 10 minutes
+
+process.on("unhandledRejection", (reason, promise) => {
+  logError("Unhandled Rejection at:", { promise, reason });
+});
+
+process.on("uncaughtException", (error) => {
+  logError("Uncaught Exception:", error);
+  process.exit(1);
+});
