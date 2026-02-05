@@ -95,12 +95,13 @@ export default function App() {
   }
 
   function prefetchStreamUrl(videoId) {
-    // Use HEAD request to initiate connection without downloading
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
     
     fetch(apiUrl(`/api/stream/${encodeURIComponent(videoId)}`), {
-      method: "HEAD",
+      method: "GET",
+      headers: { Range: "bytes=0-1023" },
+      keepalive: true,
       signal: controller.signal,
     })
       .then(() => console.log(`Prefetched: ${videoId}`))
@@ -174,6 +175,8 @@ export default function App() {
 
   function playAtIndex(index) {
     if (index < 0 || index >= playlist.length) return;
+    const target = playlistRef.current[index];
+    if (target?.videoId) prefetchStreamUrl(target.videoId);
     setCurrentSongIndex(index);
     setIsPlaying(true);
   }

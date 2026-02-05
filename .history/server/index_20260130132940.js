@@ -152,23 +152,31 @@ async function fetchStreamUrl(videoId) {
       log(`Fetching FAST stream URL for: ${videoId}`);
       const videoUrl = toYouTubeWatchUrl(videoId);
 
-      const { stdout } = await runYtDlp(
-        [
-          "-f",
-          "bestaudio[ext=m4a][filesize<50M]/bestaudio[ext=mp3]/bestaudio[ext=webm]/bestaudio/worstaudio/worst[acodec!=none]/worst",
-          "-g",
-          "--no-playlist",
-          "--no-warnings",
-          "--extractor-args",
-          "youtube:player_client=android,web",
-          "--throttled-rate",
-          "100K", // Don't wait for slow formats
-          "--socket-timeout",
-          "10", // Faster timeout
-          videoUrl,
-        ],
-        { timeoutMs: 15_000 }, // Shorter timeout for streaming
-      );
+      const baseArgs = [
+        "-g",
+        "--no-playlist",
+        "--no-warnings",
+        "--extractor-args",
+        "youtube:player_client=android,web",
+        "--throttled-rate",
+        "100K",
+        "--socket-timeout",
+        "10",
+        videoUrl,
+      ];
+
+      let stdout;
+      try {
+        ({ stdout } = await runYtDlp(
+          ["-f", "bestaudio/worstaudio", ...baseArgs],
+          { timeoutMs: 15_000 },
+        ));
+      } catch {
+        ({ stdout } = await runYtDlp(
+          ["-f", "best[acodec!=none]/worst[acodec!=none]", ...baseArgs],
+          { timeoutMs: 15_000 },
+        ));
+      }
 
       const directUrl = String(stdout).trim().split(/\r?\n/).filter(Boolean)[0];
       if (!directUrl) throw new Error("yt-dlp returned no stream URL");

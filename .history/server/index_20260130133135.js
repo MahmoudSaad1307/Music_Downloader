@@ -155,7 +155,7 @@ async function fetchStreamUrl(videoId) {
       const { stdout } = await runYtDlp(
         [
           "-f",
-          "bestaudio[ext=m4a][filesize<50M]/bestaudio[ext=mp3]/bestaudio[ext=webm]/bestaudio/worstaudio/worst[acodec!=none]/worst",
+          "bestaudio[ext=m4a][vcodec=none][acodec!=none][filesize<50M]/bestaudio[vcodec=none][acodec!=none]/worstaudio[vcodec=none][acodec!=none]",
           "-g",
           "--no-playlist",
           "--no-warnings",
