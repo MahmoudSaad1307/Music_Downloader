@@ -25,7 +25,7 @@ export default function App() {
   const audioRef = useRef(null);
   const playlistRef = useRef([]);
 
-  const apiBase = (import.meta.env.VITE_API_BASE ?? "/")
+  const apiBase = (import.meta.env.VITE_API_BASE ?? "")
     .trim()
     .replace(/\/$/, "");
   const apiUrl = useMemo(() => {
