@@ -20,7 +20,7 @@ function logError(message, error) {
   console.error(error?.stack || error);
 }
 
-const ytDlpPath = process.env.YTDLP_PATH || "../bin/yt-dlp";
+const ytDlpPath = process.env.YTDLP_PATH || "../bin/";
 
 // IMPROVED: Separate caches for stream URLs and full video info
 const streamUrlCache = new Map();
