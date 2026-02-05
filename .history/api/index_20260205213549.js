@@ -3,11 +3,7 @@ import express from "express";
 import { spawn } from "node:child_process";
 import { Readable, pipeline } from "node:stream";
 import yts from "yt-search";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -24,15 +20,8 @@ function logError(message, error) {
   console.error(error?.stack || error);
 }
 
-const ytDlpPath = join(process.cwd(), "bin/yt-dlp");
+const ytDlpPath = join(__dirname, "../bin/yt-dlp");
 
-// Make it executable
-try {
-  chmodSync(ytDlpPath, 0o755);
-  log(`Made yt-dlp executable: ${ytDlpPath}`);
-} catch (err) {
-  logError("Failed to chmod yt-dlp", err);
-}
 // IMPROVED: Separate caches for stream URLs and full video info
 const streamUrlCache = new Map();
 const videoInfoCache = new Map();

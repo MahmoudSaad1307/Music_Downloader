@@ -26,13 +26,6 @@ function logError(message, error) {
 
 const ytDlpPath = join(process.cwd(), "bin/yt-dlp");
 
-// Make it executable
-try {
-  chmodSync(ytDlpPath, 0o755);
-  log(`Made yt-dlp executable: ${ytDlpPath}`);
-} catch (err) {
-  logError("Failed to chmod yt-dlp", err);
-}
 // IMPROVED: Separate caches for stream URLs and full video info
 const streamUrlCache = new Map();
 const videoInfoCache = new Map();
