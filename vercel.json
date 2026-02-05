@@ -8,8 +8,9 @@
       "config": { "distDir": "dist" }
     }
   ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/server/index.js" },
-    { "src": "/(.*)", "dest": "/$1" }
-  ]
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 10
+    }
+  }
 }
